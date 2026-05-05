@@ -28,6 +28,24 @@ REGIME_PERIOD = 200  # 200-day MA
 START_DATE = '2020-01-01'
 END_DATE = '2023-01-01'
 
+# Trading costs
+TRADING_FEE = 0.001  # 0.10% per trade
+SLIPPAGE = 0.001  # 0.10% per trade
+
+# Portfolio
+STARTING_CAPITAL = 10000
+
+# Data source
+DATA_SOURCE = 'real'  # 'real' or 'mock'
+
+# Real data symbols (Binance spot)
+REAL_SYMBOLS = [
+    'BTC/USDT', 'ETH/USDT', 'BNB/USDT', 'ADA/USDT', 'SOL/USDT', 'DOT/USDT',
+    'DOGE/USDT', 'AVAX/USDT', 'LTC/USDT', 'MATIC/USDT', 'ALGO/USDT', 'VET/USDT',
+    'ICP/USDT', 'FIL/USDT', 'TRX/USDT', 'ETC/USDT', 'XLM/USDT', 'THETA/USDT',
+    'FTT/USDT', 'HBAR/USDT'
+]
+
 # Output files
 EQUITY_CURVE_CSV = 'equity_curve.csv'
 TRADES_CSV = 'trades.csv'

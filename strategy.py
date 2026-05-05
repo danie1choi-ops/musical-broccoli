@@ -8,22 +8,18 @@ def rank_coins(universe, data, date):
     """
     Rank coins by 30-day momentum as of the given date.
 
-    Args:
-        universe (list): List of eligible coins
-        data (dict): OHLCV data
-        date (pd.Timestamp): Date for ranking
-
-    Returns:
-        list: Ranked list of coins (best to worst momentum)
+    Uses data up to date-1 to avoid look-ahead bias.
     """
     ranks = []
     for coin in universe:
         if coin not in data:
             continue
         close_prices = data[coin]['close']
-        if len(close_prices.loc[:date]) < SIGNAL_PERIOD + 1:
+        # Use data up to date - 1 day
+        available_data = close_prices.loc[:date].iloc[:-1] if len(close_prices.loc[:date]) > 1 else close_prices.loc[:date]
+        if len(available_data) < SIGNAL_PERIOD + 1:
             continue
-        mom = momentum(close_prices.loc[:date], SIGNAL_PERIOD).iloc[-1]
+        mom = momentum(available_data, SIGNAL_PERIOD).iloc[-1]
         ranks.append((coin, mom))
 
     # Sort by momentum descending
