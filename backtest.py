@@ -55,9 +55,12 @@ def _check_regime(date, regime_mode, btc_close, btc_sma, btc_momentum_50_200):
 
 
 
-def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma'):
+def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', save_diagnostics=False):
     """
     Run a parameterized variant backtest.
+    
+    Args:
+        save_diagnostics (bool): If True, save momentum scores and rankings to CSV
     """
     # Load data
     coins = [s.split('/')[0] for s in REAL_SYMBOLS] if DATA_SOURCE == 'real' else MOCK_COINS
@@ -94,6 +97,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     holdings_history = []
     diagnostics = []
     avg_holding_periods = []
+    momentum_diagnostics = []  # Track momentum scores and rankings
 
     rebalance_dates = _build_rebalance_dates(START_DATE, END_DATE, rebalance_freq)
 

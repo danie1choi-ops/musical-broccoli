@@ -31,8 +31,14 @@ def sma(prices, period=200):
 
 def relative_momentum(coin_prices, btc_prices, period=30):
     """
-    Calculate relative momentum: coin return - BTC return.
-
+    Calculate relative momentum: how coin performs relative to BTC.
+    
+    This measures the change in the coin/BTC ratio over the period.
+    A positive value means the coin is outperforming BTC.
+    
+    Formula:
+    relative_return = (coin_price_today / BTC_price_today) / (coin_price_period_ago / BTC_price_period_ago) - 1
+    
     Args:
         coin_prices (pd.Series): Coin price series
         btc_prices (pd.Series): BTC price series
@@ -41,6 +47,8 @@ def relative_momentum(coin_prices, btc_prices, period=30):
     Returns:
         pd.Series: Relative momentum values
     """
-    coin_mom = momentum(coin_prices, period)
-    btc_mom = momentum(btc_prices, period)
-    return coin_mom - btc_mom
+    # Calculate the coin/BTC ratio at each point
+    coin_btc_ratio = coin_prices / btc_prices
+    
+    # Calculate momentum of the ratio (not momentum of difference)
+    return coin_btc_ratio / coin_btc_ratio.shift(period) - 1

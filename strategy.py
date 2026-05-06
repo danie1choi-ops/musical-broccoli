@@ -4,10 +4,10 @@ import pandas as pd
 from indicators import momentum, relative_momentum
 from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS
 
-def rank_coins(universe, data, date, momentum_mode='absolute'):
+def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
     """
-    Rank coins by momentum as of the given date.
-
+    Calculate momentum scores for all coins as of the given date.
+    
     Uses data up to date-1 to avoid look-ahead bias.
     
     Args:
@@ -17,9 +17,9 @@ def rank_coins(universe, data, date, momentum_mode='absolute'):
         momentum_mode (str): 'absolute' or 'relative' (relative to BTC)
     
     Returns:
-        list: Ranked list of coins (best to worst momentum)
+        list: List of tuples (coin, momentum_score)
     """
-    ranks = []
+    scores = []
     for coin in universe:
         if coin not in data:
             continue
@@ -40,11 +40,30 @@ def rank_coins(universe, data, date, momentum_mode='absolute'):
         else:  # absolute
             mom = momentum(available_data, SIGNAL_PERIOD).iloc[-1]
         
-        ranks.append((coin, mom))
+        scores.append((coin, mom))
+    
+    return scores
 
+
+def rank_coins(universe, data, date, momentum_mode='absolute'):
+    """
+    Rank coins by momentum as of the given date.
+
+    Uses data up to date-1 to avoid look-ahead bias.
+    
+    Args:
+        universe (list): List of eligible coins
+        data (dict): OHLCV data
+        date (pd.Timestamp): Date for ranking
+        momentum_mode (str): 'absolute' or 'relative' (relative to BTC)
+    
+    Returns:
+        list: Ranked list of coins (best to worst momentum)
+    """
+    scores = get_momentum_scores(universe, data, date, momentum_mode)
     # Sort by momentum descending
-    ranks.sort(key=lambda x: x[1], reverse=True)
-    return [coin for coin, _ in ranks]
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return [coin for coin, _ in scores]
 
 def get_target_positions(ranked_coins, current_positions, data, date):
     """
