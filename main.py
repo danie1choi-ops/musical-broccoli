@@ -1,15 +1,16 @@
 # main.py - CLI entry point for the crypto momentum backtesting project
 
 import argparse
+import os
 import pandas as pd
-from backtest import run_backtest
+from backtest import run_backtest, compare_variants, compare_regimes
 from performance import calculate_performance
 from data_loader import download_binance_data
 from config import EQUITY_CURVE_CSV, TRADES_CSV, HOLDINGS_CSV, DIAGNOSTICS_CSV, DATA_SOURCE, REAL_SYMBOLS, START_DATE, END_DATE
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto Momentum Backtest')
-    parser.add_argument('--mode', choices=['backtest', 'download-data'], default='backtest', help='Mode to run')
+    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes'], default='backtest', help='Mode to run')
     args = parser.parse_args()
 
     if args.mode == 'download-data':
@@ -38,14 +39,33 @@ def main():
             print(f"{key}: {value}")
 
         # Save CSVs
-        results['equity_curve'].to_csv(EQUITY_CURVE_CSV)
-        results['trades'].to_csv(TRADES_CSV, index=False)
-        results['holdings'].to_csv(HOLDINGS_CSV)
-        results['diagnostics'].to_csv(DIAGNOSTICS_CSV)
-        results['btc_equity'].to_csv('btc_equity.csv')
-        results['eth_equity'].to_csv('eth_equity.csv')
+        os.makedirs('outputs', exist_ok=True)
+        results['equity_curve'].to_csv(os.path.join('outputs', EQUITY_CURVE_CSV))
+        results['trades'].to_csv(os.path.join('outputs', TRADES_CSV), index=False)
+        results['holdings'].to_csv(os.path.join('outputs', HOLDINGS_CSV))
+        results['diagnostics'].to_csv(os.path.join('outputs', DIAGNOSTICS_CSV))
+        results['btc_equity'].to_csv(os.path.join('outputs', 'btc_equity.csv'))
+        results['eth_equity'].to_csv(os.path.join('outputs', 'eth_equity.csv'))
 
-        print(f"Results saved to {EQUITY_CURVE_CSV}, {TRADES_CSV}, {HOLDINGS_CSV}, {DIAGNOSTICS_CSV}, btc_equity.csv, eth_equity.csv")
+        print(f"Results saved to outputs/{EQUITY_CURVE_CSV}, outputs/{TRADES_CSV}, outputs/{HOLDINGS_CSV}, outputs/{DIAGNOSTICS_CSV}, outputs/btc_equity.csv, outputs/eth_equity.csv")
+
+    elif args.mode == 'compare-variants':
+        print("Comparing variants...")
+        comparison = compare_variants()
+        os.makedirs('outputs', exist_ok=True)
+        path = os.path.join('outputs', 'variant_comparison.csv')
+        comparison.to_csv(path, index=False)
+        print(f"Variant comparison saved to {path}")
+
+    elif args.mode == 'compare-regimes':
+        print("Comparing regime filters and momentum modes...")
+        comparison = compare_regimes()
+        os.makedirs('outputs', exist_ok=True)
+        path = os.path.join('outputs', 'regime_relative_strength_comparison.csv')
+        comparison.to_csv(path, index=False)
+        print(f"Regime comparison saved to {path}")
+        print("\nComparison Results:")
+        print(comparison.to_string())
 
 if __name__ == '__main__':
     main()

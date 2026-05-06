@@ -24,6 +24,12 @@ MAX_POSITIONS = 10  # Max 10 positions
 REGIME_ASSET = 'BTC'
 REGIME_PERIOD = 200  # 200-day MA
 
+# Momentum mode: "absolute" or "relative" (relative = coin_mom - BTC_mom)
+MOMENTUM_MODE = 'absolute'
+
+# Regime filter mode: "btc_200dma", "dual_trend", "btc_90d_positive"
+REGIME_FILTER_MODE = 'btc_200dma'
+
 # Backtest dates
 START_DATE = '2020-01-01'
 END_DATE = '2023-01-01'

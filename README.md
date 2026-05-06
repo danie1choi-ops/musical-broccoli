@@ -24,7 +24,13 @@ Run the backtest:
 python main.py --mode backtest
 ```
 
-This will generate CSV outputs: equity_curve.csv, trades.csv, holdings.csv, diagnostics.csv
+Run the variant comparison:
+
+```bash
+python main.py --mode compare-variants
+```
+
+This will generate CSV outputs in `outputs/`, including `variant_comparison.csv`.
 
 ## Files
 

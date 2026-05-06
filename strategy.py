@@ -1,14 +1,23 @@
 # strategy.py - Module for strategy logic: ranking, entries, exits, portfolio weights
 
 import pandas as pd
-from indicators import momentum
+from indicators import momentum, relative_momentum
 from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS
 
-def rank_coins(universe, data, date):
+def rank_coins(universe, data, date, momentum_mode='absolute'):
     """
-    Rank coins by 30-day momentum as of the given date.
+    Rank coins by momentum as of the given date.
 
     Uses data up to date-1 to avoid look-ahead bias.
+    
+    Args:
+        universe (list): List of eligible coins
+        data (dict): OHLCV data
+        date (pd.Timestamp): Date for ranking
+        momentum_mode (str): 'absolute' or 'relative' (relative to BTC)
+    
+    Returns:
+        list: Ranked list of coins (best to worst momentum)
     """
     ranks = []
     for coin in universe:
@@ -19,7 +28,18 @@ def rank_coins(universe, data, date):
         available_data = close_prices.loc[:date].iloc[:-1] if len(close_prices.loc[:date]) > 1 else close_prices.loc[:date]
         if len(available_data) < SIGNAL_PERIOD + 1:
             continue
-        mom = momentum(available_data, SIGNAL_PERIOD).iloc[-1]
+        
+        if momentum_mode == 'relative':
+            if 'BTC' not in data:
+                continue
+            btc_prices = data['BTC']['close']
+            btc_available = btc_prices.loc[:date].iloc[:-1] if len(btc_prices.loc[:date]) > 1 else btc_prices.loc[:date]
+            if len(btc_available) < SIGNAL_PERIOD + 1:
+                continue
+            mom = relative_momentum(available_data, btc_available, SIGNAL_PERIOD).iloc[-1]
+        else:  # absolute
+            mom = momentum(available_data, SIGNAL_PERIOD).iloc[-1]
+        
         ranks.append((coin, mom))
 
     # Sort by momentum descending
