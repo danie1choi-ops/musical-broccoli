@@ -67,3 +67,17 @@ def relative_momentum(coin_prices, btc_prices, period=30):
     relative_strength[zero_btc] = coin_return[zero_btc] - btc_return[zero_btc]
     
     return relative_strength
+
+def realized_volatility(prices, period=30):
+    """
+    Calculate realized volatility of daily returns over a rolling window.
+
+    Args:
+        prices (pd.Series): Price series
+        period (int): Lookback period for daily returns volatility
+
+    Returns:
+        pd.Series: Rolling standard deviation of daily returns
+    """
+    returns = prices.pct_change().dropna()
+    return returns.rolling(window=period).std(ddof=0)

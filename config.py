@@ -40,6 +40,8 @@ SLIPPAGE = 0.001  # 0.10% per trade
 
 # Portfolio
 STARTING_CAPITAL = 10000
+POSITION_SIZING_MODE = 'equal_weight'  # 'equal_weight' or 'inverse_volatility'
+MAX_POSITION_SIZE = 0.25  # Maximum position size per coin for sizing rules
 
 # Data source
 DATA_SOURCE = 'real'  # 'real' or 'mock'

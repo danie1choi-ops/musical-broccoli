@@ -2,11 +2,11 @@
 
 import os
 import pandas as pd
-from config import START_DATE, END_DATE, REBALANCE_FREQ, REGIME_ASSET, REGIME_PERIOD, MOCK_COINS, TOP_N, TRADING_FEE, SLIPPAGE, STARTING_CAPITAL, DATA_SOURCE, REAL_SYMBOLS, MOMENTUM_MODE, REGIME_FILTER_MODE
+from config import START_DATE, END_DATE, REBALANCE_FREQ, REGIME_ASSET, REGIME_PERIOD, MOCK_COINS, TOP_N, TRADING_FEE, SLIPPAGE, STARTING_CAPITAL, DATA_SOURCE, REAL_SYMBOLS, MOMENTUM_MODE, REGIME_FILTER_MODE, POSITION_SIZING_MODE, MAX_POSITION_SIZE
 from data_loader import load_ohlcv_data
 from universe import get_universe
 from indicators import sma, momentum
-from strategy import rank_coins
+from strategy import rank_coins, calculate_position_weights
 
 def _build_rebalance_dates(start_date, end_date, frequency):
     if frequency == 'weekly':
@@ -54,8 +54,145 @@ def _check_regime(date, regime_mode, btc_close, btc_sma, btc_momentum_50_200):
     return False
 
 
+def _rebalance_portfolio(holdings, target_weights, current_prices, portfolio_value, cash, date):
+    """Rebalance holdings to target weights with fees and slippage."""
+    trades = []
+    total_fees = 0.0
+    total_slippage = 0.0
 
-def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', save_diagnostics=False):
+    # Exit any held coins that are not part of the target allocation
+    for coin in list(holdings):
+        if coin not in target_weights or coin not in current_prices:
+            price = current_prices.get(coin, holdings[coin]['entry_price'])
+            shares = holdings[coin]['shares']
+            notional = shares * price
+            fee = notional * TRADING_FEE
+            slippage = notional * SLIPPAGE
+            net_proceeds = notional - fee - slippage
+            cash += net_proceeds
+            total_fees += fee
+            total_slippage += slippage
+            trades.append({
+                'date': date,
+                'coin': coin,
+                'action': 'exit',
+                'price': price,
+                'shares': shares,
+                'trade_notional': notional,
+                'fee_paid': fee,
+                'slippage_paid': slippage,
+                'total_cost': fee + slippage,
+                'net_proceeds': net_proceeds
+            })
+            del holdings[coin]
+
+    # Calculate current notional for coins that will remain in the portfolio
+    current_values = {}
+    for coin in target_weights:
+        if coin in holdings and coin in current_prices:
+            current_values[coin] = holdings[coin]['shares'] * current_prices[coin]
+        else:
+            current_values[coin] = 0.0
+
+    buy_orders = {}
+    sell_orders = {}
+    for coin, target_weight in target_weights.items():
+        if coin not in current_prices:
+            continue
+        target_value = target_weight * portfolio_value
+        current_value = current_values.get(coin, 0.0)
+        diff = target_value - current_value
+        if diff > 0:
+            buy_orders[coin] = diff
+        elif diff < 0:
+            sell_orders[coin] = -diff
+
+    # Execute sells first to free up cash for rebalance purchases
+    for coin, notional in sell_orders.items():
+        if coin not in holdings or coin not in current_prices:
+            continue
+        price = current_prices[coin]
+        shares = min(notional / price, holdings[coin]['shares'])
+        if shares <= 0:
+            continue
+        trade_notional = shares * price
+        fee = trade_notional * TRADING_FEE
+        slippage = trade_notional * SLIPPAGE
+        net_proceeds = trade_notional - fee - slippage
+        holdings[coin]['shares'] -= shares
+        if holdings[coin]['shares'] <= 1e-12:
+            del holdings[coin]
+        cash += net_proceeds
+        total_fees += fee
+        total_slippage += slippage
+        trades.append({
+            'date': date,
+            'coin': coin,
+            'action': 'rebalance_sell',
+            'price': price,
+            'shares': shares,
+            'trade_notional': trade_notional,
+            'fee_paid': fee,
+            'slippage_paid': slippage,
+            'total_cost': fee + slippage,
+            'net_proceeds': net_proceeds
+        })
+
+    # Execute buys with available cash
+    total_buy_notional = sum(buy_orders.values())
+    if total_buy_notional > 0:
+        estimated_cost = total_buy_notional * (1 + TRADING_FEE + SLIPPAGE)
+        scale = min(1.0, cash / estimated_cost) if estimated_cost > 0 else 0.0
+    else:
+        scale = 0.0
+
+    for coin, notional in buy_orders.items():
+        if coin not in current_prices:
+            continue
+        scaled_notional = notional * scale
+        if scaled_notional <= 0:
+            continue
+        price = current_prices[coin]
+        shares = scaled_notional / price
+        fee = scaled_notional * TRADING_FEE
+        slippage = scaled_notional * SLIPPAGE
+        total_cost = fee + slippage
+        if scaled_notional + total_cost > cash and cash > 0:
+            scaled_notional = cash / (1 + TRADING_FEE + SLIPPAGE)
+            shares = scaled_notional / price
+            fee = scaled_notional * TRADING_FEE
+            slippage = scaled_notional * SLIPPAGE
+            total_cost = fee + slippage
+        if scaled_notional <= 0:
+            continue
+        cash -= scaled_notional + total_cost
+        total_fees += fee
+        total_slippage += slippage
+        if coin in holdings:
+            holdings[coin]['shares'] += shares
+        else:
+            holdings[coin] = {
+                'shares': shares,
+                'entry_price': price,
+                'entry_date': date
+            }
+        trades.append({
+            'date': date,
+            'coin': coin,
+            'action': 'rebalance_buy',
+            'price': price,
+            'shares': shares,
+            'trade_notional': scaled_notional,
+            'fee_paid': fee,
+            'slippage_paid': slippage,
+            'total_cost': total_cost,
+            'cash_remaining': cash
+        })
+
+    return holdings, cash, trades, total_fees, total_slippage
+
+
+def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, save_diagnostics=False):
     """
     Run a parameterized variant backtest.
     
@@ -142,7 +279,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
                 if coin not in ranked[:exit_top]:
                     exit_coins.append(coin)
                     continue
-                
+
                 # Exit rule 2: trailing stop hit
                 if trailing_stop and coin in data and date in data[coin].index:
                     entry_date = position['entry_date']
@@ -153,6 +290,8 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
             # Execute exits
             for coin in exit_coins:
+                if coin not in holdings:
+                    continue
                 shares = holdings[coin]['shares']
                 entry_date = holdings[coin]['entry_date']
                 price = current_prices.get(coin, holdings[coin]['entry_price'])
@@ -180,42 +319,19 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
                 })
                 del holdings[coin]
 
-            # Enter new positions
-            open_coins = [coin for coin in target_coins if coin not in holdings]
-            if open_coins:
-                weight = min(1.0 / len(target_coins), 0.1) if target_coins else 0
-                desired_notional = weight * portfolio_value
-                total_required = desired_notional * len(open_coins)
-                scale = min(1.0, cash / total_required) if total_required > 0 else 0
-                for coin in open_coins:
-                    if coin in current_prices and cash > 0:
-                        price = current_prices[coin]
-                        notional = desired_notional * scale
-                        shares = notional / price
-                        fee = notional * TRADING_FEE
-                        slippage = notional * SLIPPAGE
-                        total_cost = fee + slippage
-                        cash -= (notional + total_cost)
-                        if cash < 0:
-                            break
-                        holdings[coin] = {
-                            'shares': shares,
-                            'entry_price': price,
-                            'entry_date': date
-                        }
-                        total_fees += fee
-                        total_slippage += slippage
-                        all_trades.append({
-                            'date': date,
-                            'coin': coin,
-                            'action': 'entry',
-                            'price': price,
-                            'shares': shares,
-                            'trade_notional': notional,
-                            'fee_paid': fee,
-                            'slippage_paid': slippage,
-                            'total_cost': total_cost
-                        })
+            target_coins = [coin for coin in target_coins if coin not in exit_coins]
+            target_weights = calculate_position_weights(target_coins, data, date, sizing_mode=position_sizing_mode)
+            holdings, cash, rebalance_trades, fees, slippage = _rebalance_portfolio(
+                holdings,
+                target_weights,
+                current_prices,
+                portfolio_value,
+                cash,
+                date
+            )
+            total_fees += fees
+            total_slippage += slippage
+            all_trades.extend(rebalance_trades)
 
         current_prices = {}
         for coin in holdings:
@@ -278,7 +394,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
 
 def run_backtest():
-    return run_variant_backtest(entry_top=TOP_N, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode=MOMENTUM_MODE, regime_filter_mode=REGIME_FILTER_MODE)
+    return run_variant_backtest(entry_top=TOP_N, exit_top=EXIT_TOP_N, trailing_stop=True, rebalance_freq=REBALANCE_FREQ, momentum_mode=MOMENTUM_MODE, regime_filter_mode=REGIME_FILTER_MODE, position_sizing_mode=POSITION_SIZING_MODE)
 
 
 def compare_variants():
@@ -351,6 +467,71 @@ def compare_variants():
             'btc_max_drawdown': metrics['BTC Max Drawdown'],
             'eth_cagr': metrics['ETH CAGR'],
             'eth_max_drawdown': metrics['ETH Max Drawdown']
+        })
+
+    return pd.DataFrame(rows)
+
+
+def compare_sizing():
+    """
+    Compare sizing mode performance for absolute momentum under the BTC 200DMA regime.
+    """
+    sizing_configs = [
+        {
+            'name': 'equal_weight_top5',
+            'position_sizing_mode': 'equal_weight',
+            'entry_top': 5
+        },
+        {
+            'name': 'inverse_volatility_top5',
+            'position_sizing_mode': 'inverse_volatility',
+            'entry_top': 5
+        },
+        {
+            'name': 'equal_weight_top10',
+            'position_sizing_mode': 'equal_weight',
+            'entry_top': 10
+        },
+        {
+            'name': 'inverse_volatility_top10',
+            'position_sizing_mode': 'inverse_volatility',
+            'entry_top': 10
+        }
+    ]
+
+    rows = []
+    from performance import calculate_performance
+
+    for config in sizing_configs:
+        results = run_variant_backtest(
+            entry_top=config['entry_top'],
+            exit_top=15,
+            trailing_stop=True,
+            rebalance_freq='weekly',
+            momentum_mode='absolute',
+            regime_filter_mode='btc_200dma',
+            position_sizing_mode=config['position_sizing_mode']
+        )
+        metrics = calculate_performance(
+            results['equity_curve'],
+            results['trades'],
+            results['btc_equity'],
+            results['eth_equity'],
+            results['summary_diagnostics']
+        )
+        rows.append({
+            'variant': config['name'],
+            'position_sizing_mode': config['position_sizing_mode'],
+            'entry_top': config['entry_top'],
+            'strategy_cagr': metrics['Strategy CAGR'],
+            'strategy_max_drawdown': metrics['Strategy Max Drawdown'],
+            'strategy_sharpe': metrics['Strategy Sharpe'],
+            'total_trades': metrics['Total Trades'],
+            'annualized_turnover': metrics['Annualized Turnover'],
+            'total_fees': metrics['Total Fees'],
+            'total_slippage': metrics['Total Slippage'],
+            'final_equity': results['equity_curve']['value'].iloc[-1] if not results['equity_curve'].empty else 0,
+            'avg_positions_held': results['summary_diagnostics'].get('avg_positions_held', 0)
         })
 
     return pd.DataFrame(rows)

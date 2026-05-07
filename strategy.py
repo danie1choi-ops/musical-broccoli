@@ -1,8 +1,8 @@
 # strategy.py - Module for strategy logic: ranking, entries, exits, portfolio weights
 
 import pandas as pd
-from indicators import momentum, relative_momentum
-from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS
+from indicators import momentum, relative_momentum, realized_volatility
+from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS, MAX_POSITION_SIZE
 
 def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
     """
@@ -64,6 +64,61 @@ def rank_coins(universe, data, date, momentum_mode='absolute'):
     # Sort by momentum descending
     scores.sort(key=lambda x: x[1], reverse=True)
     return [coin for coin, _ in scores]
+
+
+def calculate_position_weights(target_coins, data, date, sizing_mode='equal_weight', vol_period=30, max_position_size=MAX_POSITION_SIZE):
+    """
+    Calculate target position weights for selected coins.
+
+    Args:
+        target_coins (list): Coins selected for entry
+        data (dict): OHLCV data
+        date (pd.Timestamp): Current date
+        sizing_mode (str): 'equal_weight' or 'inverse_volatility'
+        vol_period (int): Lookback for volatility calculation
+        max_position_size (float): Maximum allowed weight per coin
+
+    Returns:
+        dict: Coin weights that sum to <= 1.0
+    """
+    if sizing_mode == 'equal_weight':
+        n = len(target_coins)
+        if n == 0:
+            return {}
+        weight = min(1.0 / n, max_position_size)
+        return {coin: weight for coin in target_coins}
+
+    if sizing_mode == 'inverse_volatility':
+        raw_weights = {}
+        for coin in target_coins:
+            if coin not in data or date not in data[coin].index:
+                continue
+            prices = data[coin]['close']
+            available = prices.loc[:date].iloc[:-1] if len(prices.loc[:date]) > 1 else prices.loc[:date]
+            if len(available) < vol_period + 1:
+                continue
+            vol_series = realized_volatility(available, vol_period)
+            if vol_series.empty:
+                continue
+            vol = vol_series.iloc[-1]
+            if pd.isna(vol) or vol <= 0:
+                continue
+            raw_weights[coin] = 1.0 / vol
+
+        if not raw_weights:
+            return {}
+
+        capped_weights = {coin: min(weight, max_position_size) for coin, weight in raw_weights.items()}
+        total_weight = sum(capped_weights.values())
+        if total_weight == 0:
+            return {}
+        if total_weight > 1.0:
+            scale = 1.0 / total_weight
+            capped_weights = {coin: weight * scale for coin, weight in capped_weights.items()}
+        return capped_weights
+
+    return {}
+
 
 def get_target_positions(ranked_coins, current_positions, data, date):
     """
