@@ -14,11 +14,11 @@ REBALANCE_FREQ = 'weekly'  # Rebalance every week
 SIGNAL_PERIOD = 30  # 30-day momentum
 
 # Strategy parameters
-TOP_N = 10  # Buy top 10 ranked coins
-EXIT_TOP_N = 20  # Exit if falls outside top 20
+TOP_N = 5  # Buy top 5 ranked coins
+EXIT_TOP_N = 15  # Exit if falls outside top 15
 STOP_LOSS_PCT = 0.25  # 25% stop loss from highest close since entry
-MAX_WEIGHT_PER_COIN = 0.10  # Max 10% per coin
-MAX_POSITIONS = 10  # Max 10 positions
+MAX_WEIGHT_PER_COIN = 0.25  # Max 25% per coin
+MAX_POSITIONS = 5  # Max 5 positions for the current baseline
 
 # Regime filter
 REGIME_ASSET = 'BTC'
@@ -40,8 +40,9 @@ SLIPPAGE = 0.001  # 0.10% per trade
 
 # Portfolio
 STARTING_CAPITAL = 10000
-POSITION_SIZING_MODE = 'equal_weight'  # 'equal_weight' or 'inverse_volatility'
+POSITION_SIZING_MODE = 'inverse_volatility'  # 'equal_weight' or 'inverse_volatility'
 MAX_POSITION_SIZE = 0.25  # Maximum position size per coin for sizing rules
+USE_BREADTH_SCALING = False  # Scale exposure using percentage of coins above their 100DMA
 
 # Data source
 DATA_SOURCE = 'real'  # 'real' or 'mock'

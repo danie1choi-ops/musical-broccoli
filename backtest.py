@@ -2,11 +2,11 @@
 
 import os
 import pandas as pd
-from config import START_DATE, END_DATE, REBALANCE_FREQ, REGIME_ASSET, REGIME_PERIOD, MOCK_COINS, TOP_N, TRADING_FEE, SLIPPAGE, STARTING_CAPITAL, DATA_SOURCE, REAL_SYMBOLS, MOMENTUM_MODE, REGIME_FILTER_MODE, POSITION_SIZING_MODE, MAX_POSITION_SIZE
+from config import START_DATE, END_DATE, REBALANCE_FREQ, REGIME_ASSET, REGIME_PERIOD, MOCK_COINS, TOP_N, TRADING_FEE, SLIPPAGE, STARTING_CAPITAL, DATA_SOURCE, REAL_SYMBOLS, MOMENTUM_MODE, REGIME_FILTER_MODE, POSITION_SIZING_MODE, MAX_POSITION_SIZE, USE_BREADTH_SCALING
 from data_loader import load_ohlcv_data
 from universe import get_universe
 from indicators import sma, momentum
-from strategy import rank_coins, calculate_position_weights
+from strategy import rank_coins, calculate_position_weights, calculate_market_breadth, exposure_scale_from_breadth, scale_position_weights
 
 def _build_rebalance_dates(start_date, end_date, frequency):
     if frequency == 'weekly':
@@ -192,7 +192,7 @@ def _rebalance_portfolio(holdings, target_weights, current_prices, portfolio_val
     return holdings, cash, trades, total_fees, total_slippage
 
 
-def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, save_diagnostics=False):
+def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING, save_diagnostics=False):
     """
     Run a parameterized variant backtest.
     
@@ -235,6 +235,8 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     diagnostics = []
     avg_holding_periods = []
     momentum_diagnostics = []  # Track momentum scores and rankings
+    latest_breadth = None
+    latest_target_exposure = 1.0
 
     rebalance_dates = _build_rebalance_dates(START_DATE, END_DATE, rebalance_freq)
 
@@ -321,6 +323,13 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
             target_coins = [coin for coin in target_coins if coin not in exit_coins]
             target_weights = calculate_position_weights(target_coins, data, date, sizing_mode=position_sizing_mode)
+            if use_breadth_scaling:
+                latest_breadth = calculate_market_breadth(universe, data, date)
+                latest_target_exposure = exposure_scale_from_breadth(latest_breadth)
+                target_weights = scale_position_weights(target_weights, latest_target_exposure)
+            else:
+                latest_breadth = None
+                latest_target_exposure = min(sum(target_weights.values()), 1.0)
             holdings, cash, rebalance_trades, fees, slippage = _rebalance_portfolio(
                 holdings,
                 target_weights,
@@ -340,6 +349,8 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
             else:
                 current_prices[coin] = holdings[coin]['entry_price']
         portfolio_value = cash + sum(holdings[coin]['shares'] * current_prices.get(coin, holdings[coin]['entry_price']) for coin in holdings)
+        invested_value = sum(holdings[coin]['shares'] * current_prices.get(coin, holdings[coin]['entry_price']) for coin in holdings)
+        exposure = invested_value / portfolio_value if portfolio_value > 0 else 0
 
         equity_curve.append({'date': date, 'value': portfolio_value})
         holdings_snapshot = {coin: holdings[coin]['shares'] * current_prices.get(coin, holdings[coin]['entry_price']) for coin in holdings}
@@ -347,6 +358,9 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
         diagnostics.append({
             'date': date,
             'regime_active': regime_active,
+            'breadth': latest_breadth,
+            'target_exposure': latest_target_exposure,
+            'exposure': exposure,
             'n_positions': len(holdings),
             'cash': cash,
             'cash_pct': cash / portfolio_value if portfolio_value > 0 else 0,
@@ -363,9 +377,13 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
     n_years = (pd.Timestamp(END_DATE) - pd.Timestamp(START_DATE)).days / 365.25
     avg_positions = diagnostics_df['n_positions'].mean()
+    avg_exposure = diagnostics_df['exposure'].mean() if 'exposure' in diagnostics_df else 0
+    time_in_cash = (diagnostics_df['exposure'] <= 1e-6).mean() if 'exposure' in diagnostics_df else 0
     rebalance_count = len(rebalance_dates)
-    avg_turnover_per_rebalance = entry_top / 2
-    annualized_turnover = (rebalance_count * avg_turnover_per_rebalance) / n_years if n_years > 0 else 0
+    total_trade_notional = trades_df['trade_notional'].sum() if not trades_df.empty and 'trade_notional' in trades_df else 0
+    avg_equity = equity_df['value'].mean() if not equity_df.empty else 0
+    annualized_turnover = total_trade_notional / avg_equity / n_years if n_years > 0 and avg_equity > 0 else 0
+    avg_turnover_per_rebalance = total_trade_notional / avg_equity / rebalance_count if rebalance_count > 0 and avg_equity > 0 else 0
     avg_holding_period = sum(avg_holding_periods) / len(avg_holding_periods) if avg_holding_periods else 0
 
     summary_diagnostics = {
@@ -375,6 +393,8 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
         'survivorship_bias': True,
         'survivorship_note': 'Using static universe of current top coins',
         'avg_positions_held': avg_positions,
+        'avg_exposure': avg_exposure,
+        'time_in_cash': time_in_cash,
         'avg_turnover_per_rebalance': avg_turnover_per_rebalance,
         'annualized_turnover': annualized_turnover,
         'total_fees': total_fees,
@@ -394,7 +414,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
 
 def run_backtest():
-    return run_variant_backtest(entry_top=TOP_N, exit_top=EXIT_TOP_N, trailing_stop=True, rebalance_freq=REBALANCE_FREQ, momentum_mode=MOMENTUM_MODE, regime_filter_mode=REGIME_FILTER_MODE, position_sizing_mode=POSITION_SIZING_MODE)
+    return run_variant_backtest(entry_top=TOP_N, exit_top=EXIT_TOP_N, trailing_stop=True, rebalance_freq=REBALANCE_FREQ, momentum_mode=MOMENTUM_MODE, regime_filter_mode=REGIME_FILTER_MODE, position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING)
 
 
 def compare_variants():
@@ -531,7 +551,63 @@ def compare_sizing():
             'total_fees': metrics['Total Fees'],
             'total_slippage': metrics['Total Slippage'],
             'final_equity': results['equity_curve']['value'].iloc[-1] if not results['equity_curve'].empty else 0,
-            'avg_positions_held': results['summary_diagnostics'].get('avg_positions_held', 0)
+            'avg_positions_held': results['summary_diagnostics'].get('avg_positions_held', 0),
+            'avg_holding_period': results['summary_diagnostics'].get('avg_holding_period', 0)
+        })
+
+    return pd.DataFrame(rows)
+
+
+def compare_exposure():
+    """
+    Compare baseline inverse-volatility top 5 against breadth-scaled exposure.
+    """
+    exposure_configs = [
+        {
+            'name': 'baseline_inverse_volatility_top5',
+            'use_breadth_scaling': False
+        },
+        {
+            'name': 'breadth_scaled_inverse_volatility_top5',
+            'use_breadth_scaling': True
+        }
+    ]
+
+    rows = []
+    from performance import calculate_performance
+
+    for config in exposure_configs:
+        results = run_variant_backtest(
+            entry_top=5,
+            exit_top=15,
+            trailing_stop=True,
+            rebalance_freq='weekly',
+            momentum_mode='absolute',
+            regime_filter_mode='btc_200dma',
+            position_sizing_mode='inverse_volatility',
+            use_breadth_scaling=config['use_breadth_scaling']
+        )
+        metrics = calculate_performance(
+            results['equity_curve'],
+            results['trades'],
+            results['btc_equity'],
+            results['eth_equity'],
+            results['summary_diagnostics']
+        )
+        rows.append({
+            'variant': config['name'],
+            'use_breadth_scaling': config['use_breadth_scaling'],
+            'strategy_cagr': metrics['Strategy CAGR'],
+            'strategy_max_drawdown': metrics['Strategy Max Drawdown'],
+            'strategy_sharpe': metrics['Strategy Sharpe'],
+            'total_trades': metrics['Total Trades'],
+            'avg_exposure_pct': results['summary_diagnostics'].get('avg_exposure', 0) * 100,
+            'time_in_cash_pct': results['summary_diagnostics'].get('time_in_cash', 0) * 100,
+            'final_equity': results['equity_curve']['value'].iloc[-1] if not results['equity_curve'].empty else 0,
+            'turnover': metrics['Annualized Turnover'],
+            'total_fees': metrics['Total Fees'],
+            'total_slippage': metrics['Total Slippage'],
+            'fees_slippage': metrics['Total Fees'] + metrics['Total Slippage']
         })
 
     return pd.DataFrame(rows)

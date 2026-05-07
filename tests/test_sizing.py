@@ -11,7 +11,8 @@ class TestSizingModes(unittest.TestCase):
         self.data = {
             'LOW_VOL': pd.DataFrame({'close': [100 + 0.1 * i for i in range(len(dates))]}, index=dates),
             'HIGH_VOL': pd.DataFrame({'close': [100 if i % 2 == 0 else 10000 for i in range(len(dates))]}, index=dates),
-            'MISSING_VOL': pd.DataFrame({'close': [100] * 15}, index=dates[:15])
+            'MISSING_VOL': pd.DataFrame({'close': [100] * 15}, index=dates[:15]),
+            'ZERO_VOL': pd.DataFrame({'close': [100] * len(dates)}, index=dates)
         }
         self.date = dates[-1]
 
@@ -27,19 +28,22 @@ class TestSizingModes(unittest.TestCase):
         self.assertGreater(weights['LOW_VOL'], weights['HIGH_VOL'])
 
     def test_max_position_cap_works(self):
-        # Create low-vol coins with near-zero volatility to force cap behavior
-        dates = pd.date_range('2020-01-01', periods=35, freq='D')
-        data = {
-            'COIN1': pd.DataFrame({'close': [100 + 1 * i for i in range(len(dates))]}, index=dates),
-            'COIN2': pd.DataFrame({'close': [100 + 1 * i for i in range(len(dates))]}, index=dates),
-            'COIN3': pd.DataFrame({'close': [100 + 1 * i for i in range(len(dates))]}, index=dates),
-            'COIN4': pd.DataFrame({'close': [100 + 1 * i for i in range(len(dates))]}, index=dates),
-            'COIN5': pd.DataFrame({'close': [100 + 1 * i for i in range(len(dates))]}, index=dates)
-        }
-        weights = calculate_position_weights(['COIN1', 'COIN2', 'COIN3', 'COIN4', 'COIN5'], data, dates[-1], sizing_mode='inverse_volatility')
+        weights = calculate_position_weights(['LOW_VOL', 'HIGH_VOL'], self.data, self.date, sizing_mode='inverse_volatility')
         self.assertTrue(weights)
         self.assertLessEqual(max(weights.values()), 0.25)
         self.assertLessEqual(sum(weights.values()), 1.0)
+        self.assertEqual(weights['LOW_VOL'], 0.25)
+
+    def test_missing_or_zero_volatility_assets_are_excluded(self):
+        weights = calculate_position_weights(
+            ['LOW_VOL', 'MISSING_VOL', 'ZERO_VOL'],
+            self.data,
+            self.date,
+            sizing_mode='inverse_volatility'
+        )
+        self.assertIn('LOW_VOL', weights)
+        self.assertNotIn('MISSING_VOL', weights)
+        self.assertNotIn('ZERO_VOL', weights)
 
 if __name__ == '__main__':
     unittest.main()

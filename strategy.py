@@ -1,7 +1,7 @@
 # strategy.py - Module for strategy logic: ranking, entries, exits, portfolio weights
 
 import pandas as pd
-from indicators import momentum, relative_momentum, realized_volatility
+from indicators import momentum, relative_momentum, realized_volatility, sma
 from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS, MAX_POSITION_SIZE
 
 def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
@@ -89,7 +89,7 @@ def calculate_position_weights(target_coins, data, date, sizing_mode='equal_weig
         return {coin: weight for coin in target_coins}
 
     if sizing_mode == 'inverse_volatility':
-        raw_weights = {}
+        inverse_vol_scores = {}
         for coin in target_coins:
             if coin not in data or date not in data[coin].index:
                 continue
@@ -103,21 +103,81 @@ def calculate_position_weights(target_coins, data, date, sizing_mode='equal_weig
             vol = vol_series.iloc[-1]
             if pd.isna(vol) or vol <= 0:
                 continue
-            raw_weights[coin] = 1.0 / vol
+            inverse_vol_scores[coin] = 1.0 / vol
 
-        if not raw_weights:
+        total_score = sum(inverse_vol_scores.values())
+        if total_score <= 0:
             return {}
 
-        capped_weights = {coin: min(weight, max_position_size) for coin, weight in raw_weights.items()}
-        total_weight = sum(capped_weights.values())
-        if total_weight == 0:
-            return {}
-        if total_weight > 1.0:
-            scale = 1.0 / total_weight
-            capped_weights = {coin: weight * scale for coin, weight in capped_weights.items()}
+        normalized_weights = {
+            coin: score / total_score
+            for coin, score in inverse_vol_scores.items()
+        }
+        capped_weights = {
+            coin: min(weight, max_position_size)
+            for coin, weight in normalized_weights.items()
+        }
         return capped_weights
 
     return {}
+
+
+def calculate_market_breadth(universe, data, date, dma_period=100):
+    """
+    Calculate the percentage of eligible coins trading above their moving average.
+
+    Coins without enough moving-average data on the date are excluded from the
+    denominator.
+    """
+    valid_count = 0
+    above_count = 0
+    for coin in universe:
+        if coin not in data or date not in data[coin].index:
+            continue
+        prices = data[coin]['close'].loc[:date]
+        if len(prices) < dma_period:
+            continue
+        moving_average = sma(prices, dma_period).iloc[-1]
+        if pd.isna(moving_average):
+            continue
+        valid_count += 1
+        if prices.iloc[-1] > moving_average:
+            above_count += 1
+
+    if valid_count == 0:
+        return 0.0
+    return above_count / valid_count
+
+
+def exposure_scale_from_breadth(breadth):
+    """Map market breadth to target exposure."""
+    if breadth > 0.70:
+        return 1.0
+    if breadth >= 0.50:
+        return 0.50
+    return 0.0
+
+
+def scale_position_weights(weights, target_exposure):
+    """Scale all position weights to the requested exposure, never above 100%."""
+    target_exposure = max(0.0, min(target_exposure, 1.0))
+    total_weight = sum(weights.values())
+    if not weights or total_weight <= 0 or target_exposure <= 0:
+        return {}
+
+    scale = min(target_exposure / total_weight, 1.0)
+    scaled_weights = {
+        coin: weight * scale
+        for coin, weight in weights.items()
+    }
+    scaled_total = sum(scaled_weights.values())
+    if scaled_total > 1.0:
+        scale = 1.0 / scaled_total
+        scaled_weights = {
+            coin: weight * scale
+            for coin, weight in scaled_weights.items()
+        }
+    return scaled_weights
 
 
 def get_target_positions(ranked_coins, current_positions, data, date):

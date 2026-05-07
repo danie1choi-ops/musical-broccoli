@@ -3,14 +3,14 @@
 import argparse
 import os
 import pandas as pd
-from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing
+from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing, compare_exposure
 from performance import calculate_performance
 from data_loader import download_binance_data
 from config import EQUITY_CURVE_CSV, TRADES_CSV, HOLDINGS_CSV, DIAGNOSTICS_CSV, DATA_SOURCE, REAL_SYMBOLS, START_DATE, END_DATE
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto Momentum Backtest')
-    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing'], default='backtest', help='Mode to run')
+    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing', 'compare-exposure'], default='backtest', help='Mode to run')
     args = parser.parse_args()
 
     if args.mode == 'download-data':
@@ -74,6 +74,16 @@ def main():
         path = os.path.join('outputs', 'sizing_comparison.csv')
         comparison.to_csv(path, index=False)
         print(f"Sizing comparison saved to {path}")
+        print("\nComparison Results:")
+        print(comparison.to_string())
+
+    elif args.mode == 'compare-exposure':
+        print("Comparing exposure scaling modes...")
+        comparison = compare_exposure()
+        os.makedirs('outputs', exist_ok=True)
+        path = os.path.join('outputs', 'exposure_comparison.csv')
+        comparison.to_csv(path, index=False)
+        print(f"Exposure comparison saved to {path}")
         print("\nComparison Results:")
         print(comparison.to_string())
 
