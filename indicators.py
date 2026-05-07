@@ -31,13 +31,16 @@ def sma(prices, period=200):
 
 def relative_momentum(coin_prices, btc_prices, period=30):
     """
-    Calculate relative momentum: how coin performs relative to BTC.
+    Calculate relative momentum: how the coin performs relative to BTC.
     
-    This measures the change in the coin/BTC ratio over the period.
-    A positive value means the coin is outperforming BTC.
+    This measures the ratio of coin returns to BTC returns.
+    A value > 1 means the coin outperformed BTC.
+    A value < 1 means the coin underperformed BTC.
     
     Formula:
-    relative_return = (coin_price_today / BTC_price_today) / (coin_price_period_ago / BTC_price_period_ago) - 1
+    coin_return = (coin_price_today / coin_price_period_ago) - 1
+    btc_return = (btc_price_today / btc_price_period_ago) - 1
+    relative_strength = coin_return / btc_return (or coin_return - btc_return if btc_return ~= 0)
     
     Args:
         coin_prices (pd.Series): Coin price series
@@ -45,10 +48,22 @@ def relative_momentum(coin_prices, btc_prices, period=30):
         period (int): Lookback period
 
     Returns:
-        pd.Series: Relative momentum values
+        pd.Series: Relative strength values (coin_return / btc_return)
     """
-    # Calculate the coin/BTC ratio at each point
-    coin_btc_ratio = coin_prices / btc_prices
+    # Calculate absolute returns
+    coin_return = momentum(coin_prices, period)
+    btc_return = momentum(btc_prices, period)
     
-    # Calculate momentum of the ratio (not momentum of difference)
-    return coin_btc_ratio / coin_btc_ratio.shift(period) - 1
+    # To avoid division by zero, use the difference when BTC return is near zero
+    # Otherwise use the ratio for true relative strength
+    relative_strength = coin_return.copy()
+    
+    # Where BTC return is not near zero, use ratio
+    nonzero_btc = btc_return.abs() > 0.001
+    relative_strength[nonzero_btc] = coin_return[nonzero_btc] / btc_return[nonzero_btc]
+    
+    # Where BTC return is near zero, use difference
+    zero_btc = ~nonzero_btc
+    relative_strength[zero_btc] = coin_return[zero_btc] - btc_return[zero_btc]
+    
+    return relative_strength
