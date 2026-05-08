@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from config import START_DATE, END_DATE
 
-def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_diagnostics):
+def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_diagnostics, start_date=None, end_date=None):
     """
     Calculate key performance metrics.
 
@@ -24,7 +24,9 @@ def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_
     # Strategy metrics
     start_value = equity_curve['value'].iloc[0]
     end_value = equity_curve['value'].iloc[-1]
-    n_years = (pd.Timestamp(END_DATE) - pd.Timestamp(START_DATE)).days / 365.25
+    start = pd.Timestamp(start_date or summary_diagnostics.get('start_date', START_DATE))
+    end = pd.Timestamp(end_date or summary_diagnostics.get('end_date', END_DATE))
+    n_years = (end - start).days / 365.25
     strategy_cagr = (end_value / start_value) ** (1 / n_years) - 1 if n_years > 0 else 0
 
     peak = equity_curve['value'].expanding().max()
@@ -32,7 +34,7 @@ def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_
     strategy_max_dd = drawdown.min()
 
     daily_returns = equity_curve['value'].pct_change().dropna()
-    if len(daily_returns) > 0:
+    if len(daily_returns) > 0 and daily_returns.std() > 0:
         strategy_sharpe = daily_returns.mean() / daily_returns.std() * np.sqrt(252)
     else:
         strategy_sharpe = 0
@@ -44,6 +46,8 @@ def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_
     btc_peak = btc_equity['value'].expanding().max()
     btc_drawdown = (btc_equity['value'] - btc_peak) / btc_peak
     btc_max_dd = btc_drawdown.min()
+    btc_returns = btc_equity['value'].pct_change().dropna()
+    btc_sharpe = btc_returns.mean() / btc_returns.std() * np.sqrt(252) if len(btc_returns) > 0 and btc_returns.std() > 0 else 0
 
     # ETH metrics
     eth_start = eth_equity['value'].iloc[0]
@@ -52,6 +56,8 @@ def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_
     eth_peak = eth_equity['value'].expanding().max()
     eth_drawdown = (eth_equity['value'] - eth_peak) / eth_peak
     eth_max_dd = eth_drawdown.min()
+    eth_returns = eth_equity['value'].pct_change().dropna()
+    eth_sharpe = eth_returns.mean() / eth_returns.std() * np.sqrt(252) if len(eth_returns) > 0 and eth_returns.std() > 0 else 0
 
     # Other metrics
     total_trades = len(trades) if not trades.empty else 0
@@ -65,8 +71,10 @@ def calculate_performance(equity_curve, trades, btc_equity, eth_equity, summary_
         'Strategy Sharpe': strategy_sharpe,
         'BTC CAGR': btc_cagr,
         'BTC Max Drawdown': btc_max_dd,
+        'BTC Sharpe': btc_sharpe,
         'ETH CAGR': eth_cagr,
         'ETH Max Drawdown': eth_max_dd,
+        'ETH Sharpe': eth_sharpe,
         'Total Trades': total_trades,
         'Total Fees': total_fees,
         'Total Slippage': total_slippage,

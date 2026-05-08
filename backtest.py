@@ -192,7 +192,7 @@ def _rebalance_portfolio(holdings, target_weights, current_prices, portfolio_val
     return holdings, cash, trades, total_fees, total_slippage
 
 
-def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING, save_diagnostics=False):
+def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING, start_date=START_DATE, end_date=END_DATE, save_diagnostics=False):
     """
     Run a parameterized variant backtest.
     
@@ -207,7 +207,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     universe = get_universe(data)
 
     # Dates
-    dates = pd.date_range(START_DATE, END_DATE, freq='D')
+    dates = pd.date_range(start_date, end_date, freq='D')
 
     # Regime filter: BTC data
     btc_close = data[REGIME_ASSET]['close']
@@ -218,9 +218,35 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
         'sma_200': btc_sma_200
     })
 
+    available_btc_dates = dates.intersection(btc_close.index)
+    if len(available_btc_dates) == 0:
+        empty_indexed = pd.DataFrame(columns=['value']).rename_axis('date')
+        empty_trades = pd.DataFrame()
+        return {
+            'equity_curve': empty_indexed.copy(),
+            'trades': empty_trades,
+            'holdings': pd.DataFrame(columns=['holdings', 'value']).rename_axis('date'),
+            'diagnostics': pd.DataFrame().rename_axis('date'),
+            'btc_equity': empty_indexed.copy(),
+            'eth_equity': empty_indexed.copy(),
+            'summary_diagnostics': {
+                'data_source': DATA_SOURCE,
+                'num_assets_tested': len(universe),
+                'start_date': str(start_date),
+                'end_date': str(end_date),
+                'date_range': f'{start_date} to {end_date}',
+                'avg_exposure': 0,
+                'time_in_cash': 0,
+                'annualized_turnover': 0,
+                'total_fees': 0,
+                'total_slippage': 0
+            }
+        }
+
     # Benchmarks
-    btc_start = btc_close.iloc[0]
-    eth_start = data['ETH']['close'].iloc[0] if 'ETH' in data else 100
+    first_btc_date = available_btc_dates[0]
+    btc_start = btc_close.loc[first_btc_date]
+    eth_start = data['ETH']['close'].loc[first_btc_date] if 'ETH' in data and first_btc_date in data['ETH'].index else 100
     btc_equity = []
     eth_equity = []
 
@@ -238,7 +264,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     latest_breadth = None
     latest_target_exposure = 1.0
 
-    rebalance_dates = _build_rebalance_dates(START_DATE, END_DATE, rebalance_freq)
+    rebalance_dates = _build_rebalance_dates(start_date, end_date, rebalance_freq)
 
     for date in dates:
         if date not in data[REGIME_ASSET].index:
@@ -375,7 +401,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     btc_df = pd.DataFrame(btc_equity).set_index('date')
     eth_df = pd.DataFrame(eth_equity).set_index('date')
 
-    n_years = (pd.Timestamp(END_DATE) - pd.Timestamp(START_DATE)).days / 365.25
+    n_years = (pd.Timestamp(end_date) - pd.Timestamp(start_date)).days / 365.25
     avg_positions = diagnostics_df['n_positions'].mean()
     avg_exposure = diagnostics_df['exposure'].mean() if 'exposure' in diagnostics_df else 0
     time_in_cash = (diagnostics_df['exposure'] <= 1e-6).mean() if 'exposure' in diagnostics_df else 0
@@ -389,7 +415,9 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     summary_diagnostics = {
         'data_source': DATA_SOURCE,
         'num_assets_tested': len(universe),
-        'date_range': f'{START_DATE} to {END_DATE}',
+        'start_date': str(start_date),
+        'end_date': str(end_date),
+        'date_range': f'{start_date} to {end_date}',
         'survivorship_bias': True,
         'survivorship_note': 'Using static universe of current top coins',
         'avg_positions_held': avg_positions,
@@ -609,6 +637,102 @@ def compare_exposure():
             'total_slippage': metrics['Total Slippage'],
             'fees_slippage': metrics['Total Fees'] + metrics['Total Slippage']
         })
+
+    return pd.DataFrame(rows)
+
+
+def get_walkforward_periods(end_date=END_DATE):
+    """Return non-overlapping walk-forward crypto market regimes."""
+    return [
+        {
+            'period': '2020_2021',
+            'start_date': '2020-01-01',
+            'end_date': '2021-12-31'
+        },
+        {
+            'period': '2022',
+            'start_date': '2022-01-01',
+            'end_date': '2022-12-31'
+        },
+        {
+            'period': '2023_onward',
+            'start_date': '2023-01-01',
+            'end_date': end_date
+        }
+    ]
+
+
+def periods_do_not_overlap(periods):
+    """Return True when every period starts after the previous period ends."""
+    sorted_periods = sorted(periods, key=lambda period: pd.Timestamp(period['start_date']))
+    for previous, current in zip(sorted_periods, sorted_periods[1:]):
+        if pd.Timestamp(current['start_date']) <= pd.Timestamp(previous['end_date']):
+            return False
+    return True
+
+
+def build_walkforward_row(period, results, metrics):
+    """Build one walk-forward output row from an independent backtest run."""
+    summary = results['summary_diagnostics']
+    equity_curve = results['equity_curve']
+    btc_equity = results['btc_equity']
+    eth_equity = results['eth_equity']
+    return {
+        'period': period['period'],
+        'start_date': period['start_date'],
+        'end_date': period['end_date'],
+        'strategy_cagr': metrics.get('Strategy CAGR', 0),
+        'strategy_max_drawdown': metrics.get('Strategy Max Drawdown', 0),
+        'strategy_sharpe': metrics.get('Strategy Sharpe', 0),
+        'total_trades': metrics.get('Total Trades', 0),
+        'avg_exposure_pct': summary.get('avg_exposure', 0) * 100,
+        'time_in_cash_pct': summary.get('time_in_cash', 0) * 100,
+        'final_equity': equity_curve['value'].iloc[-1] if not equity_curve.empty else STARTING_CAPITAL,
+        'total_fees': metrics.get('Total Fees', 0),
+        'total_slippage': metrics.get('Total Slippage', 0),
+        'fees_slippage': metrics.get('Total Fees', 0) + metrics.get('Total Slippage', 0),
+        'btc_cagr': metrics.get('BTC CAGR', 0),
+        'btc_max_drawdown': metrics.get('BTC Max Drawdown', 0),
+        'btc_sharpe': metrics.get('BTC Sharpe', 0),
+        'btc_final_equity': btc_equity['value'].iloc[-1] if not btc_equity.empty else STARTING_CAPITAL,
+        'eth_cagr': metrics.get('ETH CAGR', 0),
+        'eth_max_drawdown': metrics.get('ETH Max Drawdown', 0),
+        'eth_sharpe': metrics.get('ETH Sharpe', 0),
+        'eth_final_equity': eth_equity['value'].iloc[-1] if not eth_equity.empty else STARTING_CAPITAL
+    }
+
+
+def walkforward_results():
+    """
+    Evaluate the current best strategy independently across market regimes.
+    """
+    periods = get_walkforward_periods()
+    rows = []
+    from performance import calculate_performance
+
+    for period in periods:
+        results = run_variant_backtest(
+            entry_top=5,
+            exit_top=15,
+            trailing_stop=True,
+            rebalance_freq='weekly',
+            momentum_mode='absolute',
+            regime_filter_mode='btc_200dma',
+            position_sizing_mode='inverse_volatility',
+            use_breadth_scaling=True,
+            start_date=period['start_date'],
+            end_date=period['end_date']
+        )
+        metrics = calculate_performance(
+            results['equity_curve'],
+            results['trades'],
+            results['btc_equity'],
+            results['eth_equity'],
+            results['summary_diagnostics'],
+            start_date=period['start_date'],
+            end_date=period['end_date']
+        )
+        rows.append(build_walkforward_row(period, results, metrics))
 
     return pd.DataFrame(rows)
 
