@@ -1,0 +1,6 @@
+date,rank,coin,selected,momentum_score,current_price,pre_exposure_weight,target_weight,current_weight,holding_status,breadth_pct,breadth_regime_status,target_exposure,target_cash_allocation,current_cash_allocation,btc_regime_active,regime_filter_state,trailing_stop_level,next_rebalance_date
+2026-05-08,1,ALGO,True,0.1576576576576576,0.1292,0.0971413718057437,0,0,new_or_not_held,71.42857142857143,full,0.0,1.0,1.0,False,inactive,0.10982,2026-05-13
+2026-05-08,2,DOGE,True,0.08469972839754547,0.10692,0.15651373314298653,0,0,new_or_not_held,71.42857142857143,full,0.0,1.0,1.0,False,inactive,0.090882,2026-05-13
+2026-05-08,3,TRX,True,0.06467358145210489,0.3486,0.25,0,0,new_or_not_held,71.42857142857143,full,0.0,1.0,1.0,False,inactive,0.29631,2026-05-13
+2026-05-08,4,VET,True,0.038010899182561175,0.007615,0.14981872354298117,0,0,new_or_not_held,71.42857142857143,full,0.0,1.0,1.0,False,inactive,0.00647275,2026-05-13
+2026-05-08,5,ADA,True,0.01585460170146935,0.2636,0.14183012438923956,0,0,new_or_not_held,71.42857142857143,full,0.0,1.0,1.0,False,inactive,0.22405999999999998,2026-05-13

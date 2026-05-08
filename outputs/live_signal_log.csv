@@ -1,0 +1,5 @@
+run_timestamp,as_of_date,selected_coins,target_exposure,cash_allocation,current_cash_allocation,breadth_pct,btc_regime_active,regime_filter_state,next_rebalance_date
+2026-05-08T10:43:37.816242+00:00,2026-05-08,ALGO|DOGE|TRX|VET|ADA,0.0,1.0,1.0,71.42857142857143,False,inactive,2026-05-13
+2026-05-08T10:44:21.269704+00:00,2026-05-08,ALGO|DOGE|TRX|VET|ADA,0.0,1.0,1.0,71.42857142857143,False,inactive,2026-05-13
+2026-05-08T10:44:50.640395+00:00,2026-05-08,ALGO|DOGE|TRX|VET|ADA,0.0,1.0,1.0,71.42857142857143,False,inactive,2026-05-13
+2026-05-08T11:09:40.417451+00:00,2026-05-08,ALGO|DOGE|TRX|VET|ADA,0.0,1.0,1.0,71.42857142857143,False,inactive,2026-05-13

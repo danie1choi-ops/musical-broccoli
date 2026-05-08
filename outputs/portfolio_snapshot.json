@@ -1,0 +1,64 @@
+{
+  "as_of_date": "2026-05-08",
+  "strategy": "production_candidate",
+  "parameters": {
+    "entry_top": 5,
+    "exit_top": 15,
+    "trailing_stop_pct": 0.15,
+    "momentum_lookback": 20,
+    "position_sizing_mode": "inverse_volatility",
+    "exposure_scaling_mode": "breadth_100dma_scaling",
+    "rebalance_freq": "weekly",
+    "momentum_mode": "absolute",
+    "regime_filter_mode": "btc_200dma"
+  },
+  "selected_coins": [
+    "ALGO",
+    "DOGE",
+    "TRX",
+    "VET",
+    "ADA"
+  ],
+  "target_exposure": 0.0,
+  "cash_allocation": 1.0,
+  "current_cash_allocation": 1.0,
+  "btc_regime_active": false,
+  "regime_filter_state": "inactive",
+  "breadth_pct": 71.42857142857143,
+  "breadth_regime_status": "full",
+  "next_rebalance_date": "2026-05-13",
+  "portfolio_value": 615554.5511774359,
+  "cash": 615554.5511774359,
+  "positions": [
+    {
+      "coin": "ALGO",
+      "target_weight": 0.0,
+      "current_weight": 0.0,
+      "trailing_stop_level": 0.10982
+    },
+    {
+      "coin": "DOGE",
+      "target_weight": 0.0,
+      "current_weight": 0.0,
+      "trailing_stop_level": 0.090882
+    },
+    {
+      "coin": "TRX",
+      "target_weight": 0.0,
+      "current_weight": 0.0,
+      "trailing_stop_level": 0.29631
+    },
+    {
+      "coin": "VET",
+      "target_weight": 0.0,
+      "current_weight": 0.0,
+      "trailing_stop_level": 0.00647275
+    },
+    {
+      "coin": "ADA",
+      "target_weight": 0.0,
+      "current_weight": 0.0,
+      "trailing_stop_level": 0.22405999999999998
+    }
+  ]
+}

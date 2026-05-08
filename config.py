@@ -37,6 +37,11 @@ END_DATE = '2023-01-01'
 # Trading costs
 TRADING_FEE = 0.001  # 0.10% per trade
 SLIPPAGE = 0.001  # 0.10% per trade
+EXECUTION_MODE = 'same_close'  # 'same_close', 'next_open', or 'next_day_vwap_approx'
+MIN_SLIPPAGE = 0.0005  # 0.05% minimum modeled slippage
+MAX_SLIPPAGE = 0.01  # 1.00% maximum modeled slippage
+SLIPPAGE_IMPACT_FACTOR = 0.10  # 1% ADV participation -> 0.10% slippage before caps
+ADV_LOOKBACK_DAYS = 30
 
 # Portfolio
 STARTING_CAPITAL = 10000

@@ -4,7 +4,7 @@ import pandas as pd
 from indicators import momentum, relative_momentum, realized_volatility, sma
 from config import SIGNAL_PERIOD, TOP_N, EXIT_TOP_N, STOP_LOSS_PCT, MAX_WEIGHT_PER_COIN, MAX_POSITIONS, MAX_POSITION_SIZE
 
-def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
+def get_momentum_scores(universe, data, date, momentum_mode='absolute', signal_period=SIGNAL_PERIOD):
     """
     Calculate momentum scores for all coins as of the given date.
     
@@ -26,7 +26,7 @@ def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
         close_prices = data[coin]['close']
         # Use data up to date - 1 day
         available_data = close_prices.loc[:date].iloc[:-1] if len(close_prices.loc[:date]) > 1 else close_prices.loc[:date]
-        if len(available_data) < SIGNAL_PERIOD + 1:
+        if len(available_data) < signal_period + 1:
             continue
         
         if momentum_mode == 'relative':
@@ -34,18 +34,18 @@ def get_momentum_scores(universe, data, date, momentum_mode='absolute'):
                 continue
             btc_prices = data['BTC']['close']
             btc_available = btc_prices.loc[:date].iloc[:-1] if len(btc_prices.loc[:date]) > 1 else btc_prices.loc[:date]
-            if len(btc_available) < SIGNAL_PERIOD + 1:
+            if len(btc_available) < signal_period + 1:
                 continue
-            mom = relative_momentum(available_data, btc_available, SIGNAL_PERIOD).iloc[-1]
+            mom = relative_momentum(available_data, btc_available, signal_period).iloc[-1]
         else:  # absolute
-            mom = momentum(available_data, SIGNAL_PERIOD).iloc[-1]
+            mom = momentum(available_data, signal_period).iloc[-1]
         
         scores.append((coin, mom))
     
     return scores
 
 
-def rank_coins(universe, data, date, momentum_mode='absolute'):
+def rank_coins(universe, data, date, momentum_mode='absolute', signal_period=SIGNAL_PERIOD):
     """
     Rank coins by momentum as of the given date.
 
@@ -60,7 +60,7 @@ def rank_coins(universe, data, date, momentum_mode='absolute'):
     Returns:
         list: Ranked list of coins (best to worst momentum)
     """
-    scores = get_momentum_scores(universe, data, date, momentum_mode)
+    scores = get_momentum_scores(universe, data, date, momentum_mode, signal_period=signal_period)
     # Sort by momentum descending
     scores.sort(key=lambda x: x[1], reverse=True)
     return [coin for coin, _ in scores]
@@ -149,11 +149,11 @@ def calculate_market_breadth(universe, data, date, dma_period=100):
     return above_count / valid_count
 
 
-def exposure_scale_from_breadth(breadth):
+def exposure_scale_from_breadth(breadth, full_threshold=0.70, half_threshold=0.50):
     """Map market breadth to target exposure."""
-    if breadth > 0.70:
+    if breadth > full_threshold:
         return 1.0
-    if breadth >= 0.50:
+    if breadth >= half_threshold:
         return 0.50
     return 0.0
 
@@ -200,15 +200,15 @@ def exposure_scale_from_alt_participation(alt_participation):
     return 0.0
 
 
-def target_exposure_for_mode(breadth, alt_participation, exposure_scaling_mode):
+def target_exposure_for_mode(breadth, alt_participation, exposure_scaling_mode, breadth_full_threshold=0.70):
     """Return target exposure for the selected market participation mode."""
     if exposure_scaling_mode == 'breadth_100dma_scaling':
-        return exposure_scale_from_breadth(breadth)
+        return exposure_scale_from_breadth(breadth, full_threshold=breadth_full_threshold)
     if exposure_scaling_mode == 'alt_participation_scaling':
         return exposure_scale_from_alt_participation(alt_participation)
     if exposure_scaling_mode == 'combined_breadth_and_alt_participation':
         return min(
-            exposure_scale_from_breadth(breadth),
+            exposure_scale_from_breadth(breadth, full_threshold=breadth_full_threshold),
             exposure_scale_from_alt_participation(alt_participation)
         )
     return 1.0

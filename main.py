@@ -1,16 +1,17 @@
 # main.py - CLI entry point for the crypto momentum backtesting project
 
 import argparse
+import json
 import os
 import pandas as pd
-from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing, compare_exposure, compare_participation, walkforward_results
+from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing, compare_exposure, compare_participation, parameter_sensitivity_results, generate_live_signals, execution_analysis_results, walkforward_results
 from performance import calculate_performance
 from data_loader import download_binance_data
 from config import EQUITY_CURVE_CSV, TRADES_CSV, HOLDINGS_CSV, DIAGNOSTICS_CSV, DATA_SOURCE, REAL_SYMBOLS, START_DATE, END_DATE
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto Momentum Backtest')
-    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing', 'compare-exposure', 'compare-participation', 'walkforward'], default='backtest', help='Mode to run')
+    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing', 'compare-exposure', 'compare-participation', 'sensitivity', 'signals', 'execution-analysis', 'walkforward'], default='backtest', help='Mode to run')
     args = parser.parse_args()
 
     if args.mode == 'download-data':
@@ -99,6 +100,68 @@ def main():
         print(f"Participation debug saved to {debug_path}")
         print("\nComparison Results:")
         print(comparison.to_string())
+
+    elif args.mode == 'sensitivity':
+        print("Running parameter sensitivity tests...")
+        sensitivity, summary = parameter_sensitivity_results()
+        os.makedirs('outputs', exist_ok=True)
+        path = os.path.join('outputs', 'parameter_sensitivity.csv')
+        summary_path = os.path.join('outputs', 'sensitivity_summary.csv')
+        sensitivity.to_csv(path, index=False)
+        summary.to_csv(summary_path, index=False)
+        print(f"Parameter sensitivity saved to {path}")
+        print(f"Sensitivity summary saved to {summary_path}")
+        print("\nSensitivity Summary:")
+        print(summary.to_string())
+
+    elif args.mode == 'signals':
+        print("Generating live signals...")
+        signals, snapshot, log = generate_live_signals()
+        os.makedirs('outputs', exist_ok=True)
+        signals_path = os.path.join('outputs', 'current_signals.csv')
+        snapshot_path = os.path.join('outputs', 'portfolio_snapshot.json')
+        log_path = os.path.join('outputs', 'live_signal_log.csv')
+        signals.to_csv(signals_path, index=False)
+        with open(snapshot_path, 'w') as f:
+            json.dump(snapshot, f, indent=2, default=str)
+        log.to_csv(log_path, mode='a', header=not os.path.exists(log_path), index=False)
+        print(f"Current signals saved to {signals_path}")
+        print(f"Portfolio snapshot saved to {snapshot_path}")
+        print(f"Live signal log appended to {log_path}")
+        print("\nCurrent Signals:")
+        print(signals.to_string())
+
+    elif args.mode == 'execution-analysis':
+        print("Running execution realism and forward-test analytics...")
+        summary, execution_diagnostics, forward_analytics, avg_slippage, highest_turnover_assets, execution_audit = execution_analysis_results()
+        os.makedirs('outputs', exist_ok=True)
+        summary_path = os.path.join('outputs', 'execution_summary.csv')
+        diagnostics_path = os.path.join('outputs', 'execution_diagnostics.csv')
+        analytics_path = os.path.join('outputs', 'forward_test_analytics.csv')
+        audit_path = os.path.join('outputs', 'execution_audit.csv')
+        avg_slippage_path = os.path.join('outputs', 'average_slippage_by_coin.csv')
+        turnover_assets_path = os.path.join('outputs', 'highest_turnover_assets.csv')
+        summary.to_csv(summary_path, index=False)
+        execution_diagnostics.to_csv(diagnostics_path, index=False)
+        forward_analytics.to_csv(analytics_path, index=False)
+        execution_audit.to_csv(audit_path, index=False)
+        avg_slippage.to_csv(avg_slippage_path, index=False)
+        highest_turnover_assets.to_csv(turnover_assets_path, index=False)
+        print(f"Execution summary saved to {summary_path}")
+        print(f"Execution diagnostics saved to {diagnostics_path}")
+        print(f"Forward-test analytics saved to {analytics_path}")
+        print(f"Execution audit saved to {audit_path}")
+        print("\nExecution Summary:")
+        print(summary.to_string())
+        if not execution_audit.empty:
+            print("\nExecution Audit Flags:")
+            print(execution_audit[['execution_scenario', 'portfolio_update_before_execution', 'fill_uses_full_next_day_ohlc', 'unrealistic_improvement_flag']].sum(numeric_only=True).to_string())
+        if not avg_slippage.empty:
+            print("\nAverage Slippage By Coin:")
+            print(avg_slippage.to_string())
+        if not highest_turnover_assets.empty:
+            print("\nHighest Turnover Assets:")
+            print(highest_turnover_assets.sort_values('total_trade_notional', ascending=False).head(20).to_string())
 
     elif args.mode == 'walkforward':
         print("Running walk-forward robustness evaluation...")
