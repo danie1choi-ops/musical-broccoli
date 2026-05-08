@@ -158,6 +158,62 @@ def exposure_scale_from_breadth(breadth):
     return 0.0
 
 
+def calculate_alt_participation(universe, data, date, btc_asset='BTC', lookback=90):
+    """
+    Calculate the percentage of eligible altcoins outperforming BTC over a lookback.
+
+    BTC itself is excluded from the altcoin denominator. Coins without enough
+    history on the date are also excluded from the denominator.
+    """
+    if btc_asset not in data or date not in data[btc_asset].index:
+        return 0.0
+
+    btc_prices = data[btc_asset]['close'].loc[:date]
+    if len(btc_prices) < lookback + 1:
+        return 0.0
+    btc_return = btc_prices.iloc[-1] / btc_prices.iloc[-lookback - 1] - 1
+
+    valid_count = 0
+    outperform_count = 0
+    for coin in universe:
+        if coin == btc_asset or coin not in data or date not in data[coin].index:
+            continue
+        prices = data[coin]['close'].loc[:date]
+        if len(prices) < lookback + 1:
+            continue
+        coin_return = prices.iloc[-1] / prices.iloc[-lookback - 1] - 1
+        valid_count += 1
+        if coin_return > btc_return:
+            outperform_count += 1
+
+    if valid_count == 0:
+        return 0.0
+    return outperform_count / valid_count
+
+
+def exposure_scale_from_alt_participation(alt_participation):
+    """Map alt participation to target exposure."""
+    if alt_participation >= 0.70:
+        return 1.0
+    if alt_participation >= 0.50:
+        return 0.50
+    return 0.0
+
+
+def target_exposure_for_mode(breadth, alt_participation, exposure_scaling_mode):
+    """Return target exposure for the selected market participation mode."""
+    if exposure_scaling_mode == 'breadth_100dma_scaling':
+        return exposure_scale_from_breadth(breadth)
+    if exposure_scaling_mode == 'alt_participation_scaling':
+        return exposure_scale_from_alt_participation(alt_participation)
+    if exposure_scaling_mode == 'combined_breadth_and_alt_participation':
+        return min(
+            exposure_scale_from_breadth(breadth),
+            exposure_scale_from_alt_participation(alt_participation)
+        )
+    return 1.0
+
+
 def scale_position_weights(weights, target_exposure):
     """Scale all position weights to the requested exposure, never above 100%."""
     target_exposure = max(0.0, min(target_exposure, 1.0))

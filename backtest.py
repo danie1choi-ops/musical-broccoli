@@ -6,7 +6,7 @@ from config import START_DATE, END_DATE, REBALANCE_FREQ, REGIME_ASSET, REGIME_PE
 from data_loader import load_ohlcv_data
 from universe import get_universe
 from indicators import sma, momentum
-from strategy import rank_coins, calculate_position_weights, calculate_market_breadth, exposure_scale_from_breadth, scale_position_weights
+from strategy import rank_coins, calculate_position_weights, calculate_market_breadth, exposure_scale_from_breadth, calculate_alt_participation, target_exposure_for_mode, scale_position_weights
 
 def _build_rebalance_dates(start_date, end_date, frequency):
     if frequency == 'weekly':
@@ -14,6 +14,31 @@ def _build_rebalance_dates(start_date, end_date, frequency):
     if frequency == 'monthly':
         return pd.date_range(start_date, end_date, freq='30D')
     return pd.date_range(start_date, end_date, freq=frequency)
+
+
+def _get_data_date_bounds(data):
+    """Return first and last available date for each loaded asset."""
+    bounds = {}
+    for coin, df in data.items():
+        if df.empty:
+            continue
+        index = pd.DatetimeIndex(df.index)
+        bounds[coin] = {
+            'start_date': index.min(),
+            'end_date': index.max(),
+            'rows': len(df)
+        }
+    return bounds
+
+
+def _latest_available_backtest_date(data, regime_asset=REGIME_ASSET):
+    """Use the regime asset's latest date as the latest date the strategy can evaluate."""
+    bounds = _get_data_date_bounds(data)
+    if regime_asset in bounds:
+        return bounds[regime_asset]['end_date']
+    if not bounds:
+        return pd.Timestamp(END_DATE)
+    return max(asset_bounds['end_date'] for asset_bounds in bounds.values())
 
 
 def _check_regime(date, regime_mode, btc_close, btc_sma, btc_momentum_50_200):
@@ -192,7 +217,7 @@ def _rebalance_portfolio(holdings, target_weights, current_prices, portfolio_val
     return holdings, cash, trades, total_fees, total_slippage
 
 
-def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING, start_date=START_DATE, end_date=END_DATE, save_diagnostics=False):
+def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalance_freq='weekly', momentum_mode='absolute', regime_filter_mode='btc_200dma', position_sizing_mode=POSITION_SIZING_MODE, use_breadth_scaling=USE_BREADTH_SCALING, exposure_scaling_mode=None, start_date=START_DATE, end_date=END_DATE, save_diagnostics=False):
     """
     Run a parameterized variant backtest.
     
@@ -200,6 +225,9 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
         save_diagnostics (bool): If True, save momentum scores and rankings to CSV
     """
     # Load data
+    if exposure_scaling_mode is None:
+        exposure_scaling_mode = 'breadth_100dma_scaling' if use_breadth_scaling else 'no_scaling'
+
     coins = [s.split('/')[0] for s in REAL_SYMBOLS] if DATA_SOURCE == 'real' else MOCK_COINS
     data = load_ohlcv_data(coins, use_real=(DATA_SOURCE == 'real'))
 
@@ -227,6 +255,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
             'trades': empty_trades,
             'holdings': pd.DataFrame(columns=['holdings', 'value']).rename_axis('date'),
             'diagnostics': pd.DataFrame().rename_axis('date'),
+            'participation_debug': pd.DataFrame(),
             'btc_equity': empty_indexed.copy(),
             'eth_equity': empty_indexed.copy(),
             'summary_diagnostics': {
@@ -262,7 +291,9 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     avg_holding_periods = []
     momentum_diagnostics = []  # Track momentum scores and rankings
     latest_breadth = None
+    latest_alt_participation = None
     latest_target_exposure = 1.0
+    participation_debug = []
 
     rebalance_dates = _build_rebalance_dates(start_date, end_date, rebalance_freq)
 
@@ -349,13 +380,26 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
 
             target_coins = [coin for coin in target_coins if coin not in exit_coins]
             target_weights = calculate_position_weights(target_coins, data, date, sizing_mode=position_sizing_mode)
-            if use_breadth_scaling:
+            if exposure_scaling_mode != 'no_scaling':
                 latest_breadth = calculate_market_breadth(universe, data, date)
-                latest_target_exposure = exposure_scale_from_breadth(latest_breadth)
+                latest_alt_participation = calculate_alt_participation(universe, data, date, btc_asset=REGIME_ASSET)
+                latest_target_exposure = target_exposure_for_mode(
+                    latest_breadth,
+                    latest_alt_participation,
+                    exposure_scaling_mode
+                )
                 target_weights = scale_position_weights(target_weights, latest_target_exposure)
             else:
                 latest_breadth = None
-                latest_target_exposure = min(sum(target_weights.values()), 1.0)
+                latest_alt_participation = None
+                latest_target_exposure = 1.0
+            participation_debug.append({
+                'date': date,
+                'exposure_scaling_mode': exposure_scaling_mode,
+                'breadth_pct': latest_breadth * 100 if latest_breadth is not None else None,
+                'alt_participation_pct': latest_alt_participation * 100 if latest_alt_participation is not None else None,
+                'target_exposure': latest_target_exposure
+            })
             holdings, cash, rebalance_trades, fees, slippage = _rebalance_portfolio(
                 holdings,
                 target_weights,
@@ -385,6 +429,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
             'date': date,
             'regime_active': regime_active,
             'breadth': latest_breadth,
+            'alt_participation': latest_alt_participation,
             'target_exposure': latest_target_exposure,
             'exposure': exposure,
             'n_positions': len(holdings),
@@ -398,6 +443,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
     trades_df = pd.DataFrame(all_trades)
     holdings_df = pd.DataFrame(holdings_history).set_index('date')
     diagnostics_df = pd.DataFrame(diagnostics).set_index('date')
+    participation_debug_df = pd.DataFrame(participation_debug)
     btc_df = pd.DataFrame(btc_equity).set_index('date')
     eth_df = pd.DataFrame(eth_equity).set_index('date')
 
@@ -435,6 +481,7 @@ def run_variant_backtest(entry_top=10, exit_top=20, trailing_stop=True, rebalanc
         'trades': trades_df,
         'holdings': holdings_df,
         'diagnostics': diagnostics_df,
+        'participation_debug': participation_debug_df,
         'btc_equity': btc_df,
         'eth_equity': eth_df,
         'summary_diagnostics': summary_diagnostics
@@ -641,8 +688,94 @@ def compare_exposure():
     return pd.DataFrame(rows)
 
 
+def compare_participation():
+    """
+    Compare BTC-led versus broad-alt participation exposure scaling modes.
+    """
+    exposure_configs = [
+        {
+            'name': 'no_scaling',
+            'exposure_scaling_mode': 'no_scaling'
+        },
+        {
+            'name': 'breadth_100dma_scaling',
+            'exposure_scaling_mode': 'breadth_100dma_scaling'
+        },
+        {
+            'name': 'alt_participation_scaling',
+            'exposure_scaling_mode': 'alt_participation_scaling'
+        },
+        {
+            'name': 'combined_breadth_and_alt_participation',
+            'exposure_scaling_mode': 'combined_breadth_and_alt_participation'
+        }
+    ]
+
+    coins = [s.split('/')[0] for s in REAL_SYMBOLS] if DATA_SOURCE == 'real' else MOCK_COINS
+    data = load_ohlcv_data(coins, use_real=(DATA_SOURCE == 'real'))
+    latest_available_date = _latest_available_backtest_date(data)
+
+    rows = []
+    debug_frames = []
+    from performance import calculate_performance
+
+    for config in exposure_configs:
+        results = run_variant_backtest(
+            entry_top=5,
+            exit_top=15,
+            trailing_stop=True,
+            rebalance_freq='weekly',
+            momentum_mode='absolute',
+            regime_filter_mode='btc_200dma',
+            position_sizing_mode='inverse_volatility',
+            exposure_scaling_mode=config['exposure_scaling_mode'],
+            start_date=START_DATE,
+            end_date=latest_available_date
+        )
+        metrics = calculate_performance(
+            results['equity_curve'],
+            results['trades'],
+            results['btc_equity'],
+            results['eth_equity'],
+            results['summary_diagnostics'],
+            start_date=START_DATE,
+            end_date=latest_available_date
+        )
+        rows.append({
+            'variant': config['name'],
+            'exposure_scaling_mode': config['exposure_scaling_mode'],
+            'strategy_cagr': metrics['Strategy CAGR'],
+            'strategy_max_drawdown': metrics['Strategy Max Drawdown'],
+            'strategy_sharpe': metrics['Strategy Sharpe'],
+            'total_trades': metrics['Total Trades'],
+            'avg_exposure_pct': results['summary_diagnostics'].get('avg_exposure', 0) * 100,
+            'time_in_cash_pct': results['summary_diagnostics'].get('time_in_cash', 0) * 100,
+            'final_equity': results['equity_curve']['value'].iloc[-1] if not results['equity_curve'].empty else 0,
+            'total_fees': metrics['Total Fees'],
+            'total_slippage': metrics['Total Slippage'],
+            'fees_slippage': metrics['Total Fees'] + metrics['Total Slippage'],
+            'btc_cagr': metrics['BTC CAGR'],
+            'btc_max_drawdown': metrics['BTC Max Drawdown'],
+            'btc_sharpe': metrics['BTC Sharpe'],
+            'eth_cagr': metrics['ETH CAGR'],
+            'eth_max_drawdown': metrics['ETH Max Drawdown'],
+            'eth_sharpe': metrics['ETH Sharpe']
+        })
+
+        debug = results['participation_debug'].copy()
+        if not debug.empty:
+            debug.insert(0, 'variant', config['name'])
+            debug_frames.append(debug)
+
+    debug_df = pd.concat(debug_frames, ignore_index=True) if debug_frames else pd.DataFrame(
+        columns=['variant', 'date', 'exposure_scaling_mode', 'breadth_pct', 'alt_participation_pct', 'target_exposure']
+    )
+    return pd.DataFrame(rows), debug_df
+
+
 def get_walkforward_periods(end_date=END_DATE):
     """Return non-overlapping walk-forward crypto market regimes."""
+    final_end = str(pd.Timestamp(end_date).date())
     return [
         {
             'period': '2020_2021',
@@ -657,7 +790,7 @@ def get_walkforward_periods(end_date=END_DATE):
         {
             'period': '2023_onward',
             'start_date': '2023-01-01',
-            'end_date': end_date
+            'end_date': final_end
         }
     ]
 
@@ -702,11 +835,71 @@ def build_walkforward_row(period, results, metrics):
     }
 
 
+def build_walkforward_data_diagnostics(periods, data, universe):
+    """Summarize actual data coverage used by each walk-forward period."""
+    bounds = _get_data_date_bounds(data)
+    latest_available_date = _latest_available_backtest_date(data)
+    asset_date_ranges = '; '.join(
+        f"{coin}:{asset_bounds['start_date'].date()} to {asset_bounds['end_date'].date()}"
+        for coin, asset_bounds in sorted(bounds.items())
+    )
+    rows = []
+    for period in periods:
+        configured_start = pd.Timestamp(period['start_date'])
+        configured_end = pd.Timestamp(period['end_date'])
+        regime_index = pd.DatetimeIndex(data.get(REGIME_ASSET, pd.DataFrame()).index)
+        regime_dates = regime_index[(regime_index >= configured_start) & (regime_index <= configured_end)]
+        actual_start = regime_dates.min() if len(regime_dates) > 0 else pd.NaT
+        actual_end = regime_dates.max() if len(regime_dates) > 0 else pd.NaT
+
+        assets_with_any_data = []
+        missing_coverage = []
+        for coin in universe:
+            coin_bounds = bounds.get(coin)
+            if coin_bounds is None:
+                missing_coverage.append(f'{coin}:missing_file')
+                continue
+            has_any_data = coin_bounds['start_date'] <= configured_end and coin_bounds['end_date'] >= configured_start
+            if has_any_data:
+                assets_with_any_data.append(coin)
+            if pd.isna(actual_start) or pd.isna(actual_end):
+                missing_coverage.append(f'{coin}:no_regime_dates')
+                continue
+            coverage_gaps = []
+            if coin_bounds['start_date'] > actual_start:
+                coverage_gaps.append(f"starts {coin_bounds['start_date'].date()}")
+            if coin_bounds['end_date'] < actual_end:
+                coverage_gaps.append(f"ends {coin_bounds['end_date'].date()}")
+            if coverage_gaps:
+                missing_coverage.append(f"{coin}:{', '.join(coverage_gaps)}")
+
+        rows.append({
+            'period': period['period'],
+            'configured_start_date': period['start_date'],
+            'configured_end_date': period['end_date'],
+            'actual_start_date': actual_start.date() if not pd.isna(actual_start) else None,
+            'actual_end_date': actual_end.date() if not pd.isna(actual_end) else None,
+            'asset_count': len(assets_with_any_data),
+            'eligible_asset_count': len(universe),
+            'loaded_asset_count': len(bounds),
+            'latest_available_date': latest_available_date.date(),
+            'asset_date_ranges': asset_date_ranges,
+            'missing_asset_coverage_count': len(missing_coverage),
+            'missing_asset_coverage': '; '.join(missing_coverage)
+        })
+
+    return pd.DataFrame(rows)
+
+
 def walkforward_results():
     """
     Evaluate the current best strategy independently across market regimes.
     """
-    periods = get_walkforward_periods()
+    coins = [s.split('/')[0] for s in REAL_SYMBOLS] if DATA_SOURCE == 'real' else MOCK_COINS
+    data = load_ohlcv_data(coins, use_real=(DATA_SOURCE == 'real'))
+    universe = get_universe(data)
+    latest_available_date = _latest_available_backtest_date(data)
+    periods = get_walkforward_periods(end_date=latest_available_date)
     rows = []
     from performance import calculate_performance
 
@@ -734,7 +927,8 @@ def walkforward_results():
         )
         rows.append(build_walkforward_row(period, results, metrics))
 
-    return pd.DataFrame(rows)
+    diagnostics = build_walkforward_data_diagnostics(periods, data, universe)
+    return pd.DataFrame(rows), diagnostics
 
 
 def compare_regimes():

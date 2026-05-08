@@ -3,14 +3,14 @@
 import argparse
 import os
 import pandas as pd
-from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing, compare_exposure, walkforward_results
+from backtest import run_backtest, compare_variants, compare_regimes, compare_sizing, compare_exposure, compare_participation, walkforward_results
 from performance import calculate_performance
 from data_loader import download_binance_data
 from config import EQUITY_CURVE_CSV, TRADES_CSV, HOLDINGS_CSV, DIAGNOSTICS_CSV, DATA_SOURCE, REAL_SYMBOLS, START_DATE, END_DATE
 
 def main():
     parser = argparse.ArgumentParser(description='Crypto Momentum Backtest')
-    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing', 'compare-exposure', 'walkforward'], default='backtest', help='Mode to run')
+    parser.add_argument('--mode', choices=['backtest', 'download-data', 'compare-variants', 'compare-regimes', 'compare-sizing', 'compare-exposure', 'compare-participation', 'walkforward'], default='backtest', help='Mode to run')
     args = parser.parse_args()
 
     if args.mode == 'download-data':
@@ -87,15 +87,33 @@ def main():
         print("\nComparison Results:")
         print(comparison.to_string())
 
+    elif args.mode == 'compare-participation':
+        print("Comparing BTC dominance and alt participation exposure modes...")
+        comparison, debug = compare_participation()
+        os.makedirs('outputs', exist_ok=True)
+        path = os.path.join('outputs', 'participation_comparison.csv')
+        debug_path = os.path.join('outputs', 'participation_debug.csv')
+        comparison.to_csv(path, index=False)
+        debug.to_csv(debug_path, index=False)
+        print(f"Participation comparison saved to {path}")
+        print(f"Participation debug saved to {debug_path}")
+        print("\nComparison Results:")
+        print(comparison.to_string())
+
     elif args.mode == 'walkforward':
         print("Running walk-forward robustness evaluation...")
-        comparison = walkforward_results()
+        comparison, diagnostics = walkforward_results()
         os.makedirs('outputs', exist_ok=True)
         path = os.path.join('outputs', 'walkforward_results.csv')
+        diagnostics_path = os.path.join('outputs', 'walkforward_data_diagnostics.csv')
         comparison.to_csv(path, index=False)
+        diagnostics.to_csv(diagnostics_path, index=False)
         print(f"Walk-forward results saved to {path}")
+        print(f"Walk-forward data diagnostics saved to {diagnostics_path}")
         print("\nWalk-forward Results:")
         print(comparison.to_string())
+        print("\nData Diagnostics:")
+        print(diagnostics.to_string())
 
 if __name__ == '__main__':
     main()
